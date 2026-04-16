@@ -34,4 +34,8 @@ Sorry if the code gives you an aneurism.
 # Usage
 `glsl2hlsl <fileToConvert>`
 
+Download from ShaderToy and generate Unity shader assets in one command:
+
+`glsl2hlsl --shadertoy <shadertoy-url-or-id> [output-dir]`
+
 Or just use the website :P
