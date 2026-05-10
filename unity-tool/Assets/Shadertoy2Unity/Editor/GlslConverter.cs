@@ -627,67 +627,65 @@ namespace Shadertoy2Unity
             var propNames = new HashSet<string>();
             foreach (var p in props) propNames.Add(p.Name);
 
-            var    result    = new StringBuilder(src.Length);
-            int    braceDepth = 0;
-            int    i         = 0;
+            var  result     = new StringBuilder(src.Length);
+            int  braceDepth = 0;
+            int  i          = 0;
+            bool lineStart  = true;  // true at the very start of input and after every '\n'
 
             while (i < src.Length)
             {
-                // Track brace depth (skip strings/comments first)
                 char c = src[i];
 
-                // Line comment
+                // ── Skip line comments unchanged ──────────────────────────────
                 if (c == '/' && i + 1 < src.Length && src[i+1] == '/')
                 {
                     int end = src.IndexOf('\n', i); if (end < 0) end = src.Length;
-                    result.Append(src, i, end - i); i = end; continue;
+                    result.Append(src, i, end - i);
+                    i = end;
+                    // lineStart stays as-is; the '\n' will be handled below
+                    continue;
                 }
-                // Block comment
+                // ── Skip block comments unchanged ─────────────────────────────
                 if (c == '/' && i + 1 < src.Length && src[i+1] == '*')
                 {
                     int end = src.IndexOf("*/", i+2, StringComparison.Ordinal);
                     if (end < 0) end = src.Length - 2; else end += 2;
-                    result.Append(src, i, end - i); i = end; continue;
+                    result.Append(src, i, end - i);
+                    i = end;
+                    continue;
                 }
-                // String literal
+                // ── Skip string literals unchanged ────────────────────────────
                 if (c == '"')
                 {
+                    lineStart = false;
                     result.Append(c); i++;
                     while (i < src.Length && src[i] != '"')
-                    { if (src[i] == '\\') { result.Append(src[i]); i++; } result.Append(src[i]); i++; }
+                    { if (src[i] == '\\') { result.Append(src[i]); i++; } if (i < src.Length) { result.Append(src[i]); i++; } }
                     if (i < src.Length) { result.Append(src[i]); i++; }
                     continue;
                 }
 
-                if (c == '{') { braceDepth++; result.Append(c); i++; continue; }
-                if (c == '}') { braceDepth--; result.Append(c); i++; continue; }
+                // ── Brace tracking ────────────────────────────────────────────
+                if (c == '{') { braceDepth++; lineStart = false; result.Append(c); i++; continue; }
+                if (c == '}') { braceDepth--; lineStart = false; result.Append(c); i++; continue; }
 
-                // At global scope, look for a declaration start:
-                // A newline (or start of string) followed by an identifier that is a
-                // known HLSL type keyword, NOT preceded by 'static'.
-                if (braceDepth == 0 && (c == '\n' || i == 0))
+                // ── Newlines reset lineStart ──────────────────────────────────
+                if (c == '\n') { lineStart = true; result.Append(c); i++; continue; }
+
+                // ── Whitespace at the start of a line does NOT clear lineStart ─
+                if (c == ' ' || c == '\t') { result.Append(c); i++; continue; }
+
+                // ── At global scope, first non-whitespace on a line ───────────
+                if (braceDepth == 0 && lineStart)
                 {
-                    int lineStart = i;
-                    if (c == '\n') { result.Append(c); i++; lineStart = i; }
+                    lineStart = false; // handled this line start; don't re-enter
 
-                    // Skip leading whitespace
-                    int ws = i;
-                    while (ws < src.Length && (src[ws] == ' ' || src[ws] == '\t')) ws++;
-
-                    // Try to detect a variable declaration:
-                    //   optional qualifiers, type keyword, identifier, ';' or '=' or '['
-                    // We only insert 'static' when:
-                    //  (a) not already starting with 'static '
-                    //  (b) starts with a type-like word
-                    //  (c) not a function definition (next non-whitespace after ident is not '(')
-                    //  (d) not a struct definition
-                    //  (e) not a blank / comment / preprocessor placeholder line
-                    if (ws < src.Length && (char.IsLetter(src[ws]) || src[ws] == '_'))
+                    if (char.IsLetter(c) || c == '_')
                     {
-                        // Read first word
-                        int wEnd = ws;
+                        // Read the first word
+                        int wEnd = i;
                         while (wEnd < src.Length && (char.IsLetterOrDigit(src[wEnd]) || src[wEnd] == '_')) wEnd++;
-                        string word = src.Substring(ws, wEnd - ws);
+                        string word = src.Substring(i, wEnd - i);
 
                         bool shouldAddStatic =
                             !word.Equals("static",    StringComparison.Ordinal) &&
@@ -697,26 +695,14 @@ namespace Shadertoy2Unity
                             !word.StartsWith("__PREPROC", StringComparison.Ordinal) &&
                             IsHlslTypeOrQualifier(word);
 
-                        if (shouldAddStatic)
+                        if (shouldAddStatic && !DeclarationLooksLikeFunction(src, i))
                         {
-                            // Check the full declaration: skip qualifiers + type → identifier
-                            // If what follows the ident is '(' it's a function definition
-                            bool isFunc = DeclarationLooksLikeFunction(src, ws);
-                            if (!isFunc)
-                            {
-                                // Don't add static to property variables
-                                string declName = GetDeclaredName(src, ws);
-                                if (declName == null || !propNames.Contains(declName))
-                                {
-                                    result.Append("static ");
-                                }
-                            }
+                            string declName = GetDeclaredName(src, i);
+                            if (declName == null || !propNames.Contains(declName))
+                                result.Append("static ");
                         }
                     }
-
-                    // The characters from 'lineStart' to 'i' were already appended
-                    // (whitespace is re-appended below in the general path)
-                    continue;
+                    // Fall through: append the character itself below
                 }
 
                 result.Append(c); i++;
