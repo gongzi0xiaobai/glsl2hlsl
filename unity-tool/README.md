@@ -1,47 +1,25 @@
 # Shadertoy2Unity — Unity Editor Tool
 
-A Unity Editor window that converts [Shadertoy](https://www.shadertoy.com) GLSL shaders into Unity ShaderLab shaders using the **glsl2hlsl** command-line tool from this repository.
+A Unity Editor window that converts [Shadertoy](https://www.shadertoy.com) GLSL shaders into
+Unity ShaderLab shaders.  
+**No external binary or Rust toolchain required** — the entire conversion runs in C# inside Unity.
 
 ---
 
 ## Features
 
 - Convert shaders directly from a **Shadertoy URL** (downloads via the public API)
-- Or paste **raw GLSL** code (e.g. the `mainImage` function you copy from the editor)
-- Optional **property extraction** — auto-exposes uniform variables in the Unity Inspector
-- Optional **raymarching mode** — adapts the shader to run on a 3-D mesh instead of a screen quad
+- Or paste **raw GLSL** code (e.g. the `mainImage` function from Shadertoy's editor)
+- **Property extraction** — `#define` macros and top-level `const` variables are detected and exposed as Inspector-editable shader properties
+- **Raymarching mode** — adapts the shader to run on a 3-D mesh with world-space ray-origin / ray-direction input instead of a screen-space quad
 - Saves the resulting `.shader` file straight into your project and refreshes the AssetDatabase
+- **Self-contained** — all GLSL-to-HLSL logic lives in `GlslConverter.cs`; nothing to install
 
 ---
 
 ## Prerequisites
 
-1. **Unity 2020.1 or newer** (uses `EditorWindow`, `AssetDatabase`, `WebClient`)
-2. The **glsl2hlsl binary** built from this repository
-
-### Building the binary
-
-From the **repository root**:
-
-```bash
-# Debug build (faster to compile)
-cargo build
-
-# Release build (recommended for production use)
-cargo build --release
-```
-
-The binary will be at:
-
-| Platform       | Path                                |
-|----------------|-------------------------------------|
-| Linux / macOS  | `target/release/glsl2hlsl`          |
-| Windows        | `target\release\glsl2hlsl.exe`      |
-
-> **macOS / Linux:** make the binary executable if needed:
-> ```bash
-> chmod +x target/release/glsl2hlsl
-> ```
+**Unity 2020.1 or newer** — that is all.  No Rust, no `cargo`, no external tools.
 
 ---
 
@@ -52,41 +30,39 @@ Copy (or symlink) the `Assets/Shadertoy2Unity` folder into your Unity project's 
 ```
 <YourUnityProject>/
   Assets/
-    Shadertoy2Unity/          ← copy this folder here
+    Shadertoy2Unity/
       Editor/
-        Shadertoy2UnityWindow.cs
+        GlslConverter.cs          ← conversion logic
+        Shadertoy2UnityWindow.cs  ← editor UI
 ```
 
-The folder **must** live inside `Assets/` (or a `Packages/` local package) so Unity's Editor compilation picks it up.
+The folder **must** live inside `Assets/` (or a local `Packages/` package) so Unity's Editor
+compilation picks it up.
 
 ---
 
 ## Usage
 
-1. Open the tool via the Unity menu: **Window → Shadertoy2Unity**
+1. Open the tool: **Window → Shadertoy2Unity**
 
-2. **Configure the binary path** (first time only):
-   - Expand the *glsl2hlsl Binary Settings* foldout
-   - Click **…** and browse to the compiled `glsl2hlsl` / `glsl2hlsl.exe` binary
-
-3. **Choose input mode:**
+2. **Choose input mode:**
 
    | Mode | What to enter |
    |------|---------------|
-   | *From Shadertoy URL* | A full URL like `https://www.shadertoy.com/view/XsBXWt` or just the ID `XsBXWt` |
-   | *From GLSL Code* | Paste the raw GLSL source from the Shadertoy code editor |
+   | *From Shadertoy URL* | Full URL `https://www.shadertoy.com/view/XsBXWt` or just `XsBXWt` |
+   | *From GLSL Code* | Paste the raw GLSL from the Shadertoy code editor |
 
-4. **Shader Name** — the filename that will be created in your project (e.g. `FractalLand` → `FractalLand.shader`)
+3. **Shader Name** — filename to create (e.g. `FractalLand` → `FractalLand.shader`)
 
-5. **Options:**
-   - *Extract Properties* — detect `float`/`vec` uniforms and expose them in the Inspector
-   - *Raymarch / Raytrace Mode* — generate world-space vertex/fragment boilerplate for marched geometry
+4. **Options:**
+   - *Extract Properties* — convert `#define`/`const` numeric values to Inspector properties
+   - *Raymarch / Raytrace Mode* — world-space vertex shader for marching against mesh geometry
 
-6. **Output Folder** — where the `.shader` file is written (default: `Assets/Shaders/Converted`). Click **…** to browse.
+5. **Output Folder** — where the `.shader` is written (default: `Assets/Shaders/Converted`).  
+   Click **…** to browse.
 
-7. Click **Convert Shader**.
-
-   The shader is saved, the AssetDatabase is refreshed, and the file is highlighted (pinged) in the Project window.
+6. Click **Convert Shader**.  
+   The shader is saved, the AssetDatabase refreshed, and the file is highlighted in the Project window.
 
 ---
 
@@ -95,31 +71,123 @@ The folder **must** live inside `Assets/` (or a `Packages/` local package) so Un
 ```
 Shadertoy URL
     │
-    ▼  (HTTP GET to Shadertoy public API)
-GLSL source code
+    ▼  HTTP GET → Shadertoy public API
+Raw GLSL source
     │
-    ▼  (written to OS temp directory)
-/tmp/Shadertoy2Unity/input.glsl
+    ▼  GlslConverter.Transpile()   (pure C#, no external process)
+ShaderLab text
     │
-    ▼  (glsl2hlsl binary invoked)
-/tmp/Shadertoy2Unity/input.glsl.shader
-    │
-    ▼  (copied into Unity project)
+    ▼  File.WriteAllText + AssetDatabase.Refresh
 Assets/Shaders/Converted/<ShaderName>.shader
 ```
 
-The underlying conversion is handled entirely by the **glsl2hlsl** Rust library; the Unity C# script is a thin UI wrapper that drives the CLI tool and manages file I/O inside the Unity project.
+### Conversion pipeline (GlslConverter.cs)
+
+| Pass | What it does |
+|------|-------------|
+| 1 | Handles `#define`, `#version`, `#extension` and `precision` directives; extracts numeric `#define` values as shader properties |
+| 2 | Word-level substitutions: GLSL types → HLSL types, simple function renames, built-in identifiers (`iTime`, `iChannel0`, …), precision-qualifier stripping, HLSL keyword escaping |
+| 3 | Argument-aware function transformations: `atan(y,x)` → `atan2`, `texture(…)` → `tex2D`/`tex2Dbias`, `textureLod` → `tex2Dlod`, `texelFetch`, vector-comparison helpers (`lessThan`, `greaterThan`, …), single-value vector casts (`vec3(x)` → `((float3)x)`), matrix constructors (`mat2(…)` → `transpose(float2x2(…))`) |
+| 4 | Logical-XOR operator: `^^` → `!=` (HLSL has no `^^`) |
+| 5 | Adds `static` to global-scope variable declarations |
+| 6 | Extracts top-level `const` variables as shader properties (when *Extract Properties* is on) |
+| 7 | Transforms `mainImage(out vec4 fragColor, in vec2 fragCoord)` into a proper `frag()` entry point with gamma-correction |
+| 8 | Restores preprocessor directives |
+| 9 | Wraps everything in a ShaderLab template with Properties block, CGPROGRAM, compatibility macros, and vertex shader |
+
+### Compatibility macros always injected
+
+```hlsl
+#define glsl_mod(x,y) (((x)-(y)*floor((x)/(y))))
+#define texelFetch(ch, uv, lod) tex2Dlod(ch, ...)
+#define textureLod(ch, uv, lod) tex2Dlod(ch, float4(uv, 0, lod))
+#define iResolution float3(_Resolution, _Resolution, _Resolution)
+#define iFrame      (floor(_Time.y / 60))
+#define iDate       float4(2020, 6, 18, 30)
+#define iSampleRate (44100)
+#define iChannelTime       float4(_Time.y, ...)
+#define iChannelResolution float4x4(...)
+```
 
 ---
 
-## CLI flags used
+## GLSL → HLSL translation reference
 
-| Unity Option           | Flag passed to binary |
-|------------------------|-----------------------|
-| Extract Properties ON  | *(default)*           |
-| Extract Properties OFF | `--no-props`          |
-| Raymarch Mode ON       | *(default)*           |
-| Raymarch Mode OFF      | `--no-raymarch`       |
+### Types
+
+| GLSL | HLSL |
+|------|------|
+| `vec2 / vec3 / vec4` | `float2 / float3 / float4` |
+| `ivec2 / ivec3 / ivec4` | `int2 / int3 / int4` |
+| `uvec2 / uvec3 / uvec4` | `uint2 / uint3 / uint4` |
+| `bvec2 / bvec3 / bvec4` | `bool2 / bool3 / bool4` |
+| `mat2 / mat3 / mat4` | `float2x2 / float3x3 / float4x4` |
+| `samplerCube` | `samplerCUBE` |
+| `mediump / highp / lowp` | *(stripped)* |
+
+### Functions
+
+| GLSL | HLSL |
+|------|------|
+| `mix` | `lerp` |
+| `fract` | `frac` |
+| `mod(x,y)` | `glsl_mod(x,y)` |
+| `inversesqrt` | `rsqrt` |
+| `atan(y,x)` | `atan2(y,x)` |
+| `atan(x)` | `atan(x)` |
+| `texture(ch,uv)` | `tex2D(ch,uv)` |
+| `texture(ch,uv,bias)` | `tex2Dbias(ch,float4(uv,0,bias))` |
+| `textureLod(ch,uv,lod)` | `tex2Dlod(ch,float4(uv,0,lod))` |
+| `textureGrad` | `tex2Dgrad` |
+| `textureCube` | `texCUBE` |
+| `dFdx / dFdy` | `ddx / ddy` |
+| `dFdxFine / dFdyFine` | `ddx_fine / ddy_fine` |
+| `floatBitsToInt` | `asint` |
+| `floatBitsToUint` | `asuint` |
+| `intBitsToFloat / uintBitsToFloat` | `asfloat` |
+| `lessThan(a,b)` | `(a < b)` |
+| `greaterThan(a,b)` | `(a > b)` |
+| `lessThanEqual(a,b)` | `(a <= b)` |
+| `greaterThanEqual(a,b)` | `(a >= b)` |
+| `equal(a,b)` | `(a == b)` |
+| `notEqual(a,b)` | `(a != b)` |
+| `not(a)` | `(!a)` |
+
+### Built-in identifiers
+
+| Shadertoy | Unity |
+|-----------|-------|
+| `iTime` | `_Time.y` |
+| `iTimeDelta` | `unity_DeltaTime.x` |
+| `iChannel0 … iChannel3` | `_MainTex … _FourthTex` |
+| `iMouse` | `_Mouse` |
+| `gl_FragCoord` | `(vertex_output.uv * _Resolution)` |
+| `iResolution` | `float3(_Resolution, _Resolution, _Resolution)` *(macro)* |
+
+---
+
+## Known limitations
+
+| Issue | Workaround |
+|-------|-----------|
+| **Matrix `*` not always wrapped in `mul()`** — without full type analysis the converter may miss matrix multiplications | Add explicit `mul(a,b)` calls where the result is wrong |
+| **Complex macro bodies** are not re-parsed for type information | Manually adjust generated code |
+| **`out` parameters** in helper functions are not auto-initialised to zero | Add `param = 0;` at the top of functions that have `out` parameters |
+| **Geometry / compute shaders** are not handled | Only `mainImage` fragment shaders are supported |
+| **`^^` (logical XOR)** is replaced with `!=`; valid only for boolean operands | Use `a != b` directly in the source |
+
+---
+
+## Suggested improvements (future work)
+
+1. **Full type tracking** — propagate declared types through assignments so matrix `*` can always be detected and wrapped in `mul()`.
+2. **`out` parameter zero-initialisation** — scan function signatures and insert `param = (type)0;` automatically.
+3. **Multi-pass / buffer shaders** — Shadertoy supports up to 4 render passes; currently only `mainImage` is converted.
+4. **Real-time `iDate`** — replace the hard-coded `float4(2020,6,18,30)` with a C# injection of the current UTC date at conversion time.
+5. **URP / HDRP templates** — the current template targets the legacy built-in render pipeline; add URP (`HLSLPROGRAM` / `UnityPerMaterial`) variants.
+6. **Preview window** — render a small live preview of the converted shader directly inside the Editor window using `Graphics.Blit`.
+7. **Swizzle alias normalisation** — `.stpq` swizzle aliases are not yet remapped to `.xyzw`; can be done with a post-pass that detects `.` followed only by `s/t/p/q` characters.
+8. **`iResolution` accuracy** — currently `_Resolution` is a single float (assumes square); expose `_ResolutionX` / `_ResolutionY` for non-square render targets.
 
 ---
 
@@ -127,10 +195,10 @@ The underlying conversion is handled entirely by the **glsl2hlsl** Rust library;
 
 | Symptom | Solution |
 |---------|----------|
-| *"glsl2hlsl binary not found"* | Set the binary path in the Settings foldout |
 | *"Shadertoy API error: Shader not found"* | Check the shader is **public** on Shadertoy |
-| Shader compiles but renders incorrectly | Try toggling *Raymarch Mode* |
-| Conversion fails with a parse error | The shader may use features not yet supported by glsl2hlsl (see main README) |
+| Shader compiles but renders incorrectly | Try toggling *Raymarch Mode*; check for matrix `*` operators that need `mul()` |
+| Conversion output is empty / wrong | The GLSL may not contain a `mainImage` function — paste only the fragment shader body |
+| Properties not appearing | Enable *Extract Properties* and make sure values are simple numeric literals |
 
 ---
 
