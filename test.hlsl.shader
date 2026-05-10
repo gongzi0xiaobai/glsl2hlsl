@@ -2,7 +2,6 @@ Shader "Converted/Template"
 {
     Properties
     {
-        [Header(General)]
         _MainTex ("iChannel0", 2D) = "white" {}
         _SecondTex ("iChannel1", 2D) = "white" {}
         _ThirdTex ("iChannel2", 2D) = "white" {}
@@ -10,26 +9,11 @@ Shader "Converted/Template"
         _Mouse ("Mouse", Vector) = (0.5, 0.5, 0.5, 0.5)
         [ToggleUI] _GammaCorrect ("Gamma Correction", Float) = 1
         _Resolution ("Resolution (Change if AA is bad)", Range(1, 1024)) = 1
-
-        [Header(Raymarching)]
-        [ToggleUI] _WorldSpace ("World Space Marching", Float) = 0
-        _Offset ("Offset (W=Scale)", Vector) = (0, 0, 0, 1)
-
-        [Header(Extracted)]
-        RAY_STEPS ("RAY_STEPS", Float) = 150
-        BRIGHTNESS ("BRIGHTNESS", Float) = 1.2
-        GAMMA ("GAMMA", Float) = 1.4
-        SATURATION ("SATURATION", Float) = 0.65
-        detail ("detail", Float) = 0.001
-        origin ("origin", Vector) = (-1,0.7,0)
-
     }
     SubShader
     {
         Pass
         {
-            Cull Off
-
             CGPROGRAM
             #pragma vertex vert
             #pragma fragment frag
@@ -46,8 +30,6 @@ Shader "Converted/Template"
             {
                 float2 uv : TEXCOORD0;
                 float4 vertex : SV_POSITION;
-                float3 ro_w : TEXCOORD1;
-                float3 hitPos_w : TEXCOORD2;
             };
 
             // Built-in properties
@@ -58,8 +40,6 @@ Shader "Converted/Template"
             float4 _Mouse;
             float _GammaCorrect;
             float _Resolution;
-            float _WorldSpace;
-            float4 _Offset;
 
             // GLSL Compatability macros
             #define glsl_mod(x,y) (((x)-(y)*floor((x)/(y))))
@@ -84,31 +64,19 @@ Shader "Converted/Template"
                 v2f o;
                 o.vertex = UnityObjectToClipPos(v.vertex);
                 o.uv =  v.uv;
-
-                if (_WorldSpace)
-                {
-                    o.ro_w = _WorldSpaceCameraPos;
-                    o.hitPos_w = mul(unity_ObjectToWorld, v.vertex);
-                }
-                else
-                {
-                    o.ro_w = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1));
-                    o.hitPos_w = v.vertex;
-                }
-
                 return o;
             }
 
 #define NYAN 
 #define WAVES 
 #define BORDER 
-float RAY_STEPS;
-float BRIGHTNESS;
-float GAMMA;
-float SATURATION;
-float detail;
+#define RAY_STEPS 150
+#define BRIGHTNESS 1.2
+#define GAMMA 1.4
+#define SATURATION 0.65
+#define detail 0.001
 #define t _Time.y*0.5
-            const float3 origin;
+            static const float3 origin = float3(-1., 0.7, 0.);
             static float det = 0.;
             float2x2 rot(float a)
             {
@@ -296,7 +264,7 @@ float detail;
                 return go;
             }
 
-            float4 frag (v2f __vertex_output, float facing : VFACE) : SV_Target
+            float4 frag (v2f __vertex_output) : SV_Target
             {
                 vertex_output = __vertex_output;
                 float4 fragColor = 0;
@@ -309,10 +277,10 @@ float detail;
                     mouse = float2(0., -0.05);
                     
                 float fov = 0.9-max(0., 0.7-_Time.y*0.3);
-                float3 dir = normalize(vertex_output.hitPos_w-vertex_output.ro_w);
+                float3 dir = normalize(float3(uv*fov, 1.));
                 dir.yz = mul(dir.yz,rot(mouse.y));
                 dir.xz = mul(dir.xz,rot(mouse.x));
-                float3 from = ((facing>0 ? vertex_output.hitPos_w : vertex_output.ro_w)+_Offset)*_Offset.w;
+                float3 from = origin+move(dir);
                 float3 color = raymarch(from, dir);
 #ifdef BORDER
                 color = lerp(((float3)0.), color, pow(max(0., 0.95-length(oriuv*oriuv*oriuv*float2(1.05, 1.1))), 0.3));
