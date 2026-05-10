@@ -4,14 +4,17 @@ use glsl2hlsl::*;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        println!("Usage: glsl2hlsl <filename>");
+        println!("Usage: glsl2hlsl <filename> [--no-props] [--no-raymarch]");
         return;
     }
+
+    let extract_props = !args.contains(&"--no-props".to_string());
+    let raymarch = !args.contains(&"--no-raymarch".to_string());
 
     let path = std::path::Path::new(args[1].as_str());
     let glsl = std::fs::read_to_string(path).expect("Error reading file");
 
-    let compiled = transpile(glsl, true, true);
+    let compiled = transpile(glsl, extract_props, raymarch);
 
     let mut arg = args[1].clone();
     arg.push_str(".shader");
